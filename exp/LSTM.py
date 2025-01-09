@@ -1,7 +1,9 @@
 import pandas as pd
+import numpy as np
 from pyspark.sql import SparkSession
 from pyspark.ml.feature import VectorAssembler, StandardScaler
-from pyspark.ml.regression import LSTMRegressor
+from keras.models import Sequential
+from keras.layers import LSTM, Dense
 from pyspark.ml.tuning import ParamGridBuilder, CrossValidator
 from pyspark.ml.evaluation import RegressionEvaluator
 import matplotlib.pyplot as plt
@@ -11,7 +13,11 @@ from pyspark.sql.functions import col, year, month, dayofmonth
 file_path = 'exp/sh600446_price.csv.csv'
 # 创建SparkSession
 spark = SparkSession.builder.appName("StockPricePrediction").getOrCreate()
-
+# 将Spark DataFrame转换为numpy数组格式，便于Keras使用
+def to_numpy_array(df):
+    features = df.select("final_features").rdd.map(lambda x: x[0].toArray()).collect()
+    target = df.select("close").rdd.map(lambda x: x[0]).collect()
+    return np.array(features), np.array(target).reshape(-1, 1)
 # 1. 原始数据的获取
 def load_data(file_path):
     """
@@ -52,35 +58,32 @@ def preprocess_data(spark_df):
     spark_df = assembler_final.transform(spark_df)
 
     train_df, val_df, test_df = spark_df.randomSplit([0.7, 0.15, 0.15], seed=42)
-    return train_df, val_df, test_df, final_feature_cols
+    # 获取特征维度信息，用于后续Keras模型构建
+    feature_dim = len(final_feature_cols)
+    return train_df, val_df, test_df, feature_dim
 # 3. 模型训练
-def train_model(train_df, val_df, final_feature_cols):
+def train_model(train_df, val_df,test_df, feature_dim):
     """
-    训练模型
+    使用Keras构建并训练LSTM模型
     :param train_df: 训练数据集
     :param val_df: 验证数据集
-    :param final_feature_cols: 最终特征列
+    :param test_df: 测试数据集
+    :param feature_dim: 特征维度
     :return: 训练好的模型
     """
-    input_size = len(final_feature_cols)  # 根据最终特征向量的维度确定输入大小
-    hidden_size = 64
-    num_layers = 2
-    output_size = 1  # 预测股票价格，输出一个值
+    X_train, y_train = to_numpy_array(train_df)
+    X_val, y_val = to_numpy_array(val_df)
+    X_test, y_test = to_numpy_array(test_df)
 
-    lstm = LSTMRegressor(inputSize=input_size, hiddenSize=hidden_size, numLayers=num_layers, outputSize=output_size)
+    model = Sequential()
+    model.add(LSTM(64, input_shape=(X_train.shape[1], feature_dim), return_sequences=False))
+    model.add(Dense(1))
 
-    paramGrid = ParamGridBuilder() \
-        .addGrid(lstm.learningRate, [0.01, 0.001]) \
-        .addGrid(lstm.maxIter, [100, 200]) \
-        .build()
+    model.compile(loss='mean_squared_error', optimizer='adam')
 
-    evaluator = RegressionEvaluator(labelCol="close", predictionCol="prediction", metricName="rmse")
-
-    crossval = CrossValidator(estimator=lstm,
-                              estimatorParamMaps=paramGrid,
-                              evaluator=evaluator,
-                              numFolds=3)
-    model = crossval.fit(train_df)
+    early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+    history = model.fit(X_train, y_train, epochs=200, batch_size=32, validation_data=(X_val, y_val),
+                        callbacks=[early_stopping])
     return model
 
 # 4. 测试结果与可视化
@@ -90,17 +93,19 @@ def evaluate_model(model, test_df):
     :param model: 训练好的模型
     :param test_df: 测试数据集
     """
-    predictions = model.transform(test_df)
-    rmse = evaluator.evaluate(predictions)
-    print("测试集均方根误差（RMSE）:", rmse)
+    # 获取测试集数据的numpy数组格式
+    X_test, y_test = test_df.select("final_features").rdd.map(lambda x: x[0].toArray()).collect(), \
+                     test_df.select("close").rdd.map(lambda x: x[0]).collect()
+    X_test = np.array(X_test)
+    y_test = np.array(y_test).reshape(-1, 1)
 
-    # 获取真实价格和预测价格数据，转换为Pandas DataFrame方便可视化
-    true_prices = predictions.select("close").toPandas()
-    predicted_prices = predictions.select("prediction").toPandas()
+    predictions = model.predict(X_test)
+    mse = np.mean((predictions - y_test) ** 2)
+    print("测试集均方误差（MSE）:", mse)
 
     # 绘制对比图
-    plt.plot(true_prices.index, true_prices['close'], label='True Prices')
-    plt.plot(predicted_prices.index, predicted_prices['prediction'], label='Predicted Prices', alpha=0.7)
+    plt.plot(y_test, label='True Prices')
+    plt.plot(predictions, label='Predicted Prices', alpha=0.7)
     plt.xlabel('Index')
     plt.ylabel('Stock Price')
     plt.title('Stock Price Prediction Comparison')
@@ -110,8 +115,8 @@ def evaluate_model(model, test_df):
 # 主函数
 def main():
     spark_df = load_data(file_path)
-    train_df, val_df, test_df, final_feature_cols = preprocess_data(spark_df)
-    model = train_model(train_df, val_df, final_feature_cols)
+    train_df, val_df, test_df, feature_dim = preprocess_data(spark_df)
+    model = train_model(train_df, val_df, test_df, feature_dim)
     evaluate_model(model, test_df)
 
 
