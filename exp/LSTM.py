@@ -4,20 +4,29 @@ from pyspark.sql import SparkSession
 from pyspark.ml.feature import VectorAssembler, StandardScaler
 from keras.models import Sequential
 from keras.layers import LSTM, Dense
+from keras.callbacks import EarlyStopping
 from pyspark.ml.tuning import ParamGridBuilder, CrossValidator
 from pyspark.ml.evaluation import RegressionEvaluator
 import matplotlib.pyplot as plt
 from pyspark.sql.functions import col, year, month, dayofmonth
 
 #实验包中已提供一个示例数据集，你可能需要根据实际情况调整路径和格式相关参数
-file_path = 'exp/sh600446_price.csv.csv'
+#file_path = 'sh600446_price.csv.csv'
+file_path = '/home/developer/new/BigData_HuaWeiColud/exp/sh600446_price.csv'
 # 创建SparkSession
 spark = SparkSession.builder.appName("StockPricePrediction").getOrCreate()
 # 将Spark DataFrame转换为numpy数组格式，便于Keras使用
-def to_numpy_array(df):
+def to_numpy_array(df,feature_dim):
     features = df.select("final_features").rdd.map(lambda x: x[0].toArray()).collect()
     target = df.select("close").rdd.map(lambda x: x[0]).collect()
-    return np.array(features), np.array(target).reshape(-1, 1)
+    features = np.array(features)
+    print("Features shape before reshape:", features.shape)
+    # for i in range(min(5, len(features))):
+    #     print(f"Element {i} of features: {features[i]}")
+    time_steps = 1#features.shape[1]
+    num_samples = features.shape[0]
+    features = features.reshape(num_samples, time_steps, feature_dim)
+    return features, np.array(target).reshape(-1, 1)
 # 1. 原始数据的获取
 def load_data(file_path):
     """
@@ -47,19 +56,21 @@ def preprocess_data(spark_df):
     scaler = StandardScaler(inputCol="features_vector", outputCol="scaled_features", withStd=True, withMean=True)
     scaler_model = scaler.fit(spark_df)
     spark_df = scaler_model.transform(spark_df)
-
+    # 检查scaled_features维度
+    sample_scaled_features = spark_df.select("scaled_features").first()[0]
+    print(f"Length of scaled_features: {len(sample_scaled_features)}")
     # 创建其他可能有用的特征（自定义特征工程）
     spark_df = spark_df.withColumn("price_range", col("high") - col("low"))
     spark_df = spark_df.withColumn("price_change_percentage", (col("close") - col("open")) / col("open"))
 
     # 选择特征列并组装最终用于模型的输入特征向量
-    final_feature_cols = ["scaled_features", "price_range", "price_change_percentage", "year", "month", "day"]
+    final_feature_cols = ["scaled_features", "price_range", "price_change_percentage"]#, "year", "month", "day"]
     assembler_final = VectorAssembler(inputCols=final_feature_cols, outputCol="final_features")
     spark_df = assembler_final.transform(spark_df)
 
     train_df, val_df, test_df = spark_df.randomSplit([0.7, 0.15, 0.15], seed=42)
     # 获取特征维度信息，用于后续Keras模型构建
-    feature_dim = len(final_feature_cols)
+    feature_dim = 7
     return train_df, val_df, test_df, feature_dim
 # 3. 模型训练
 def train_model(train_df, val_df,test_df, feature_dim):
@@ -71,9 +82,9 @@ def train_model(train_df, val_df,test_df, feature_dim):
     :param feature_dim: 特征维度
     :return: 训练好的模型
     """
-    X_train, y_train = to_numpy_array(train_df)
-    X_val, y_val = to_numpy_array(val_df)
-    X_test, y_test = to_numpy_array(test_df)
+    X_train, y_train = to_numpy_array(train_df, feature_dim)
+    X_val, y_val = to_numpy_array(val_df, feature_dim)
+    X_test, y_test = to_numpy_array(test_df, feature_dim)
 
     model = Sequential()
     model.add(LSTM(64, input_shape=(X_train.shape[1], feature_dim), return_sequences=False))
@@ -98,7 +109,10 @@ def evaluate_model(model, test_df):
                      test_df.select("close").rdd.map(lambda x: x[0]).collect()
     X_test = np.array(X_test)
     y_test = np.array(y_test).reshape(-1, 1)
-
+    # 重塑X_test的形状以匹配模型期望的输入形状
+    time_steps = 1
+    num_samples = X_test.shape[0]
+    X_test = X_test.reshape(num_samples, time_steps, -1)
     predictions = model.predict(X_test)
     mse = np.mean((predictions - y_test) ** 2)
     print("测试集均方误差（MSE）:", mse)
@@ -110,7 +124,7 @@ def evaluate_model(model, test_df):
     plt.ylabel('Stock Price')
     plt.title('Stock Price Prediction Comparison')
     plt.legend()
-    plt.show()
+    plt.savefig('stock_price_prediction.png')
 
 # 主函数
 def main():
