@@ -1,0 +1,11 @@
+Thu, 09 Jan 2025 20:18:54 logger.py[line:11] INFO ====== WebDriver manager ======
+Thu, 09 Jan 2025 20:18:55 logger.py[line:11] INFO Get LATEST chromedriver version for google-chrome
+Thu, 09 Jan 2025 20:18:57 logger.py[line:11] INFO Get LATEST chromedriver version for google-chrome
+Thu, 09 Jan 2025 20:18:58 logger.py[line:11] INFO There is no [win64] chromedriver "131.0.6778.264" for browser google-chrome "131.0.6778" in cache
+Thu, 09 Jan 2025 20:18:58 logger.py[line:11] INFO Get LATEST chromedriver version for google-chrome
+Thu, 09 Jan 2025 20:19:01 logger.py[line:11] INFO WebDriver version 131.0.6778.264 selected
+Thu, 09 Jan 2025 20:19:01 logger.py[line:11] INFO Modern chrome version https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.264/win32/chromedriver-win32.zip
+Thu, 09 Jan 2025 20:19:01 logger.py[line:11] INFO About to download new driver from https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.264/win32/chromedriver-win32.zip
+Thu, 09 Jan 2025 20:19:07 logger.py[line:11] INFO Driver downloading response is 200
+Thu, 09 Jan 2025 20:19:10 logger.py[line:11] INFO Get LATEST chromedriver version for google-chrome
+Thu, 09 Jan 2025 20:19:11 logger.py[line:11] INFO Driver has been saved in cache [C:\Users\86159\.wdm\drivers\chromedriver\win64\131.0.6778.264]
